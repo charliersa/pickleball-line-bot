@@ -4,6 +4,23 @@
 import crypto from 'node:crypto';
 
 const LIFF_URL = 'https://liff.line.me/2012621364-BTCqnFfK';
+// 跟報名系統（index.js）共用同一個 Firebase 專案，用來查「目前最新一筆接龍」的 chainId
+const DB_URL = 'https://pickleball-ad66b-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+// 報名系統的接龍網址要帶 ?e=<chainId> 才會直接打開報名頁，否則只會看到開團／團資訊兩個 tab。
+// chainId 是每週新建的，機器人沒辦法寫死，改成即時查 Firebase 拿「最新一筆」接龍的 id。
+async function latestSignupLink() {
+  try {
+    const res = await fetch(`${DB_URL}/chains.json?orderBy="createdAt"&limitToLast=1`);
+    if (!res.ok) return LIFF_URL;
+    const data = await res.json();
+    const id = data && Object.keys(data)[0];
+    return id ? `${LIFF_URL}?e=${id}` : LIFF_URL;
+  } catch (err) {
+    console.error('查詢最新接龍失敗', err);
+    return LIFF_URL;
+  }
+}
 
 // 驗證請求真的來自 LINE（用 Channel secret 對原始內容做 HMAC-SHA256）
 function isValidSignature(rawBody, signature) {
@@ -29,7 +46,7 @@ async function reply(replyToken, messages) {
 }
 
 // 歡迎訊息：用 textV2 的 {m0}、{m1}… 佔位符 @ 每位新成員
-function welcomeMessage(members) {
+async function welcomeMessage(members) {
   const users = members.filter((m) => m.type === 'user').slice(0, 20);
   if (!users.length) return null;
   const substitution = {};
@@ -37,16 +54,17 @@ function welcomeMessage(members) {
     substitution[`m${i}`] = { type: 'mention', mentionee: { type: 'user', userId: m.userId } };
   });
   const names = users.map((_, i) => `{m${i}}`).join(' ');
+  const link = await latestSignupLink();
   return {
     type: 'textV2',
-    text: `👋 歡迎 ${names} 加入！\n\n🏓 進擊的匹克團｜雙場分級包場計畫\n1～2 月體驗期單次只要 160 元／人，3 月起正式推出會員方案！\n\n📣 報名打球請點連結，或點群組裡最新的接龍卡片「我要報名」，額滿會自動排候補：\n${LIFF_URL}`,
+    text: `👋 歡迎 ${names} 加入！\n\n🏓 進擊的匹克團｜雙場分級包場計畫\n1～2 月體驗期單次只要 160 元／人，3 月起正式推出會員方案！\n\n📣 報名打球請點連結，或點群組裡最新的接龍卡片「我要報名」，額滿會自動排候補：\n${link}`,
     substitution,
   };
 }
 
 async function handleEvent(event) {
   if (event.type === 'memberJoined') {
-    const msg = welcomeMessage(event.joined?.members || []);
+    const msg = await welcomeMessage(event.joined?.members || []);
     if (msg) await reply(event.replyToken, [msg]);
   } else if (event.type === 'join') {
     await reply(event.replyToken, [{
