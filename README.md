@@ -15,3 +15,5 @@
 - `LINE_CHANNEL_ACCESS_TOKEN` — LINE Developers Console → Messaging API → Channel access token（長期）
 
 **LINE 後台設定**：Webhook URL 填 `https://<你的網域>/api/webhook`，並開啟「Use webhook」。機器人本身也要先被邀請加入 LINE 群組，才收得到新成員加入的事件。
+
+**部署方式**：請用「連接 GitHub repo」讓 Vercel 自動部署（Settings → Git → Connect），不要再用 `vercel deploy` CLI 直接上傳，否則程式碼改了也不會真的套用到正式網址。
