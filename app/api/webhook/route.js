@@ -33,12 +33,20 @@ async function db(path, { method = 'GET', body, query = '' } = {}) {
 }
 
 // 最近建立的接龍（新的在前）
+// 優先用 Firebase 依 createdAt 查詢（需要規則 .indexOn: ["createdAt"]）；索引沒設好時改成讀全部接龍自己排序
 async function recentChains(limit) {
-  const data = await db('chains', { query: `?orderBy=${encodeURIComponent('"createdAt"')}&limitToLast=${limit}` });
+  let data;
+  try {
+    data = await db('chains', { query: `?orderBy=${encodeURIComponent('"createdAt"')}&limitToLast=${limit}` });
+  } catch (err) {
+    console.warn('依 createdAt 查詢失敗，改讀全部接龍', err.message);
+    data = await db('chains');
+  }
   return Object.entries(data || {})
     .map(([id, c]) => ({ id, ...c }))
-    .filter((c) => 'price' in c)
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    .filter((c) => c && 'price' in c)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, limit);
 }
 
 // 報名系統的接龍網址要帶 ?e=<chainId> 才會直接打開報名頁
