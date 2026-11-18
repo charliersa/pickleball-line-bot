@@ -4,6 +4,10 @@
 
 - 有新成員加入群組 → 自動回覆歡迎訊息，並 @ 提及新成員，附上報名連結
 - 機器人被拉進群組 → 自我介紹
+- 群組輸入「取消報名」或「請假」→ 直接取消最新一場的報名（會員則登記本次請假），回覆 @ 本人的確認 + 最新名單卡
+- 機器人名單卡上的「取消報名」是 postback 按鈕：在聊天室按一下就取消，不用開網頁
+
+需要 Firebase 規則：`chains` 有 `".read": true` 與 `".indexOn": ["createdAt"]`（見 pickleball-attack 的 firebase-rules-chains.json）。
 
 ## 部署（Vercel）
 
