@@ -49,13 +49,37 @@ async function recentChains(limit) {
     .slice(0, limit);
 }
 
-// 報名系統的接龍網址要帶 ?e=<chainId> 才會直接打開報名頁
-async function latestSignupLink() {
+// 接龍只存「1/3（日）」：依建立時間推年份（例如 11 月開 1 月的團算成隔年）
+function chainIso(c) {
+  const m = String(c.date || '').match(/(\d{1,2})\/(\d{1,2})/);
+  if (!m) return '';
+  const created = new Date((c.createdAt || Date.now()) + 8 * 3600e3); // 台灣時間
+  let y = created.getUTCFullYear();
+  const mo = Number(m[1]);
+  if (mo < created.getUTCMonth() + 1 - 6) y += 1;
+  return `${y}-${String(mo).padStart(2, '0')}-${String(Number(m[2])).padStart(2, '0')}`;
+}
+
+const todayIso = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+
+// 歡迎訊息用的報名連結：還沒打的場次，週五、週日各取最近的一場（同一天開了好幾次團取最後建立的）
+// 都沒有就退回最新建立的一場；再沒有才給主連結
+async function signupLinks() {
   try {
-    const [c] = await recentChains(1);
-    return c ? chainUrl(c.id) : LIFF_URL;
+    const list = await recentChains(12);
+    const today = todayIso();
+    const pick = {};
+    for (const c of list) { // list 是新建立的在前，同日期保留第一個（最新建立）
+      const iso = chainIso(c);
+      if (!iso || iso < today) continue;
+      const d = chainDay(c);
+      if (!pick[d] || iso < pick[d].iso) pick[d] = { ...c, iso };
+    }
+    const upcoming = Object.values(pick).sort((a, b) => a.iso.localeCompare(b.iso));
+    if (upcoming.length) return upcoming.map((c) => `📅 ${c.date} ${c.title}\n👉 ${chainUrl(c.id)}`).join('\n\n');
+    return list[0] ? chainUrl(list[0].id) : LIFF_URL;
   } catch (err) {
-    console.error('查詢最新接龍失敗', err);
+    console.error('查詢接龍失敗', err);
     return LIFF_URL;
   }
 }
@@ -286,10 +310,10 @@ async function welcomeMessage(members) {
     substitution[`m${i}`] = { type: 'mention', mentionee: { type: 'user', userId: m.userId } };
   });
   const names = users.map((_, i) => `{m${i}}`).join(' ');
-  const link = await latestSignupLink();
+  const link = await signupLinks();
   return {
     type: 'textV2',
-    text: `👋 歡迎 ${names} 加入！\n\n🏓 進擊的匹克團｜週五、週日雙時段分級包場\n1～2 月體驗期單次只要 160 元／人，3 月起正式推出會員方案！\n\n📣 報名打球請點連結，或點群組裡最新的接龍卡片「我要報名」，額滿會自動排候補：\n${link}\n\n❌ 要取消報名，在群組輸入「取消報名」即可`,
+    text: `👋 歡迎 ${names} 加入！\n\n🏓 進擊的匹克團｜週五、週日雙時段分級包場\n1～2 月體驗期單次只要 160 元／人，3 月起正式推出會員方案！\n\n📣 點下面的報名連結直接報名，額滿會自動排候補：\n\n${link}\n\n❌ 要取消報名，在群組輸入「取消報名」即可`,
     substitution,
   };
 }
