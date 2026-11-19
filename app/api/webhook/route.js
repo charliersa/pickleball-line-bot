@@ -61,9 +61,9 @@ function chainIso(c) {
 
 const todayIso = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
 
-// 歡迎訊息用的報名連結：還沒打的場次，週五、週日各取最近的一場（同一天開了好幾次團取最後建立的）
-// 都沒有就退回最新建立的一場；再沒有才給主連結
-async function signupLinks() {
+// 歡迎訊息用的報名場次：還沒打的場次，週五、週日各取最近的一場（同一天開了好幾次團取最後建立的）
+// 都沒有就退回最新建立的一場；再沒有（或查詢失敗）回傳空陣列，卡片改放主連結
+async function upcomingChains() {
   try {
     const list = await recentChains(12);
     const today = todayIso();
@@ -75,11 +75,10 @@ async function signupLinks() {
       if (!pick[d] || iso < pick[d].iso) pick[d] = { ...c, iso };
     }
     const upcoming = Object.values(pick).sort((a, b) => a.iso.localeCompare(b.iso));
-    if (upcoming.length) return upcoming.map((c) => `📅 ${c.date} ${c.title}\n👉 ${chainUrl(c.id)}`).join('\n\n');
-    return list[0] ? chainUrl(list[0].id) : LIFF_URL;
+    return upcoming.length ? upcoming : list.slice(0, 1);
   } catch (err) {
     console.error('查詢接龍失敗', err);
-    return LIFF_URL;
+    return [];
   }
 }
 
@@ -301,8 +300,76 @@ async function reply(replyToken, messages) {
   if (!res.ok) console.error('reply failed', res.status, await res.text());
 }
 
-// 歡迎訊息：用 textV2 的 {m0}、{m1}… 佔位符 @ 每位新成員
-async function welcomeMessage(members) {
+// ---------- 歡迎卡片 ----------
+// 橫幅圖放在報名網站（GitHub Pages）：新 logo + 背景的鹿，20:13
+const WELCOME_HERO = 'https://charliersa.github.io/pickleball-attack/assets/welcome-hero.jpg';
+const W = { bg: '#0b1a3a', panel: '#13254d', gold: '#FFC83D', orange: '#FF9A1F', text: '#EEF2FF', muted: '#AAB6D3' };
+
+const featureRow = (icon, text) => ({
+  type: 'box', layout: 'baseline', spacing: 'md',
+  contents: [
+    { type: 'text', text: icon, size: 'sm', flex: 0 },
+    { type: 'text', text, size: 'sm', color: W.text, wrap: true, flex: 1 },
+  ],
+});
+
+function welcomeFlex(chains) {
+  const buttons = chains.length
+    ? chains.map((c, i) => ({
+      type: 'button', style: 'primary', height: 'sm', color: i === 0 ? W.orange : '#C77A12',
+      action: { type: 'uri', label: `立即報名｜${c.date}`.slice(0, 40), uri: chainUrl(c.id) },
+    }))
+    : [{ type: 'button', style: 'primary', height: 'sm', color: W.orange, action: { type: 'uri', label: '打開報名網站', uri: LIFF_URL } }];
+  const sessions = chains.map((c) => ({
+    type: 'box', layout: 'baseline', spacing: 'sm',
+    contents: [
+      { type: 'text', text: '📅', size: 'sm', flex: 0 },
+      { type: 'text', text: `${c.date}　${c.title}`, size: 'sm', color: W.gold, weight: 'bold', wrap: true, flex: 1 },
+    ],
+  }));
+  return {
+    type: 'flex',
+    altText: '👋 歡迎加入進擊的匹克團！點卡片按鈕直接報名',
+    contents: {
+      type: 'bubble',
+      hero: {
+        type: 'image', url: WELCOME_HERO, size: 'full', aspectRatio: '20:13', aspectMode: 'cover',
+        action: { type: 'uri', uri: chains[0] ? chainUrl(chains[0].id) : LIFF_URL },
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'md', backgroundColor: W.bg, paddingAll: '18px',
+        contents: [
+          { type: 'text', text: 'WELCOME', size: 'xs', color: W.orange, weight: 'bold' },
+          { type: 'text', text: '歡迎加入進擊的匹克團！', size: 'lg', color: W.gold, weight: 'bold', wrap: true },
+          { type: 'text', text: '週五・週日雙時段｜鹿角 4、5 號場分級包場', size: 'xs', color: W.muted, wrap: true },
+          { type: 'separator', color: '#2a3d6b', margin: 'md' },
+          {
+            type: 'box', layout: 'vertical', spacing: 'sm', margin: 'md',
+            contents: [
+              featureRow('🌱', '初學友善、同級交流、跨級挑戰，依程度分場'),
+              featureRow('💰', '1～2 月體驗期單次 160 元／人，3 月起推出會員方案'),
+              featureRow('⏳', '額滿自動排候補，有人取消就遞補'),
+            ],
+          },
+          ...(sessions.length ? [{
+            type: 'box', layout: 'vertical', spacing: 'sm', margin: 'lg', paddingAll: '12px',
+            backgroundColor: W.panel, cornerRadius: '10px', contents: sessions,
+          }] : []),
+        ],
+      },
+      footer: {
+        type: 'box', layout: 'vertical', spacing: 'sm', backgroundColor: W.bg, paddingAll: '14px', paddingTop: '0px',
+        contents: [
+          ...buttons,
+          { type: 'text', text: '💬 要取消報名，在群組輸入「取消報名」', size: 'xxs', color: W.muted, align: 'center', margin: 'md', wrap: true },
+        ],
+      },
+    },
+  };
+}
+
+// 歡迎訊息：先一則 textV2 用 {m0}、{m1}… @ 每位新成員（Flex 卡片不能 @ 人），再接歡迎卡片
+async function welcomeMessages(members) {
   const users = members.filter((m) => m.type === 'user').slice(0, 20);
   if (!users.length) return null;
   const substitution = {};
@@ -310,18 +377,17 @@ async function welcomeMessage(members) {
     substitution[`m${i}`] = { type: 'mention', mentionee: { type: 'user', userId: m.userId } };
   });
   const names = users.map((_, i) => `{m${i}}`).join(' ');
-  const link = await signupLinks();
-  return {
-    type: 'textV2',
-    text: `👋 歡迎 ${names} 加入！\n\n🏓 進擊的匹克團｜週五、週日雙時段分級包場\n1～2 月體驗期單次只要 160 元／人，3 月起正式推出會員方案！\n\n📣 點下面的報名連結直接報名，額滿會自動排候補：\n\n${link}\n\n❌ 要取消報名，在群組輸入「取消報名」即可`,
-    substitution,
-  };
+  const chains = await upcomingChains();
+  return [
+    { type: 'textV2', text: `👋 歡迎 ${names} 加入！報名請點下面卡片的按鈕 👇`, substitution },
+    welcomeFlex(chains),
+  ];
 }
 
 async function handleEvent(event) {
   if (event.type === 'memberJoined') {
-    const msg = await welcomeMessage(event.joined?.members || []);
-    if (msg) await reply(event.replyToken, [msg]);
+    const msgs = await welcomeMessages(event.joined?.members || []);
+    if (msgs) await reply(event.replyToken, msgs);
   } else if (event.type === 'join') {
     await reply(event.replyToken, [{
       type: 'text',
