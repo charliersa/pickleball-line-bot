@@ -15,9 +15,8 @@ const COURT_SIZE = 8;         // 每面上限人數（跟試算表「營運總�
 const FLEX_MAX_ROWS = 40;
 const PLANS = ['季繳', '月繳'];
 const DAY_LABEL = { sun: '週日', fri: '週五' };
-// 改版前的接龍（沒有 courts 欄位）：週日 6 號挑戰場、7 號交流場；舊會員資料 6→4、7→5
-const LEGACY_COURTS = { 6: { name: '進擊挑戰場', level: '3.0+' }, 7: { name: '進擊交流場', level: '2.5～2.99' } };
-const LEGACY_COURT_MAP = { 6: '4', 7: '5' };
+// 場地固定是鹿角 4、5 號場；改版前的 6、7 號場接龍與舊格式會員不再處理
+const COURT_NOS = ['4', '5'];
 
 const chainUrl = (id) => `${LIFF_URL}?e=${encodeURIComponent(id)}`;
 
@@ -44,7 +43,7 @@ async function recentChains(limit) {
   }
   return Object.entries(data || {})
     .map(([id, c]) => ({ id, ...c }))
-    .filter((c) => c && 'price' in c)
+    .filter((c) => c && 'price' in c && chainCourts(c).length) // 跳過沒有 4、5 號場的舊接龍
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
     .slice(0, limit);
 }
@@ -86,18 +85,16 @@ async function signupLinks() {
 
 // ---------- 跟網站相同的名額邏輯（index.js） ----------
 function normalizeMember(key, m) {
-  if (!m || !PLANS.includes(m.plan) || !/^\d{1,2}$/.test(String(m.court))) return null;
-  const legacy = !key.includes('_');
-  const day = DAY_LABEL[m.day] ? m.day : (key.endsWith('_fri') ? 'fri' : 'sun');
-  const rawCourt = String(m.court);
+  const court = String(m?.court);
+  if (!m || !PLANS.includes(m.plan) || !COURT_NOS.includes(court) || !DAY_LABEL[m.day]) return null;
+  if (key !== `${key.split('_')[0]}_${m.day}`) return null; // key 結尾要跟時段一致
   return {
     key,
     lineId: key.split('_')[0],
     name: String(m.name || '會員'),
     plan: m.plan,
-    day,
-    rawCourt,
-    court: legacy && !m.day ? (LEGACY_COURT_MAP[rawCourt] || rawCourt) : rawCourt,
+    day: m.day,
+    court,
   };
 }
 
@@ -108,12 +105,14 @@ function cleanMembers(val) {
 const chainDay = (c) => (DAY_LABEL[c.day] ? c.day : 'sun');
 
 function memberOf(uid, day, members) {
-  return members.find((m) => m.key === `${uid}_${day}`) || (day === 'sun' && members.find((m) => m.key === uid && m.day === 'sun')) || null;
+  return members.find((m) => m.key === `${uid}_${day}`) || null;
 }
 
+// 只取 4、5 號場；沒存 courts 的舊接龍回傳空陣列
 function chainCourts(c) {
-  const src = c.courts || LEGACY_COURTS;
-  return Object.keys(src).sort((a, b) => a - b).map((no) => ({ no, name: src[no].name, level: src[no].level }));
+  const src = c.courts || {};
+  return Object.keys(src).filter((no) => COURT_NOS.includes(no)).sort((a, b) => a - b)
+    .map((no) => ({ no, name: src[no].name, level: src[no].level }));
 }
 
 const friendList = (e) => Object.values(e?.friends || {}).filter(Boolean);
@@ -144,7 +143,7 @@ function splitEntries(list, capacity) {
 
 function courtData(c, court, members) {
   const day = chainDay(c);
-  const ms = members.filter((m) => m.day === day && (m.court === court.no || m.rawCourt === court.no))
+  const ms = members.filter((m) => m.day === day && m.court === court.no)
     .map((m) => ({ ...m, leave: !!c.leaves?.[m.key] }));
   const active = ms.filter((m) => !m.leave).length;
   const cap = Math.max(0, COURT_SIZE - active);
@@ -226,7 +225,8 @@ function buildChainFlex(c, members) {
 }
 
 // ---------- 取消報名 ----------
-const myEntryKeys = (c, uid) => Object.keys(c.entries || {}).filter((k) => k === uid || k.startsWith(`${uid}_`));
+// 報名 key 是「LINE ID_場地」
+const myEntryKeys = (c, uid) => Object.keys(c.entries || {}).filter((k) => k.startsWith(`${uid}_`));
 
 // 取消 uid 的報名：有單次報名 → 全部取消；沒有但是會員 → 本次請假。
 // onlyChainId 有值（按卡片按鈕）只處理那一場；沒有（打字）就從最近幾場找最新一筆有關的
